@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: build (${{ matrix.id }}, SD ${{ matrix.sd_width }}-bit, ${{ matrix.sd_freq }})
+    name: build (${{ matrix.id }})
     runs-on: ubuntu-latest
 
     strategy:
@@ -17,15 +17,22 @@ jobs:
           - id: "1"
             sd_width: "4"
             sd_freq: "50000000"
+            sd_cd: "pb4"
+
           - id: "2"
             sd_width: "1"
             sd_freq: "25000000"
+            sd_cd: "pb4"
+
           - id: "3"
             sd_width: "4"
             sd_freq: "25000000"
+            sd_cd: "ignore"
+
           - id: "4"
             sd_width: "1"
-            sd_freq: "50000000"
+            sd_freq: "25000000"
+            sd_cd: "ignore"
 
     steps:
       - name: 安装交叉编译环境
@@ -34,24 +41,25 @@ jobs:
           sudo apt-get install -y gcc-arm-linux-gnueabihf build-essential bison flex \
             libssl-dev device-tree-compiler python3-setuptools python3-dev swig
 
-      - name: 拉取 U-Boot
+      - name: 拉取主线 U-Boot 源码
         uses: actions/checkout@v6
         with:
           repository: u-boot/u-boot
           path: u-boot
           fetch-depth: 1
 
-      - name: 配置并编译测试版本 ${{ matrix.id }}
+      - name: 配置并编译版本 ${{ matrix.id }}
         working-directory: ./u-boot
         env:
           SD_WIDTH: ${{ matrix.sd_width }}
           SD_FREQ: ${{ matrix.sd_freq }}
+          SD_CD: ${{ matrix.sd_cd }}
         run: |
           set -eux
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
 
-          # 屏幕及控制台
+          # 1024x600 RGB666 屏幕与背光
           ./scripts/config --enable CONFIG_VIDEO_SUNXI
           ./scripts/config --enable CONFIG_VIDEO_LCD_IF_PARALLEL
           ./scripts/config --disable CONFIG_VIDEO_LCD_IF_LVDS
@@ -87,7 +95,7 @@ jobs:
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
           ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # MMC / SD / eMMC
+          # MMC、SD、eMMC、分区和文件系统
           ./scripts/config --enable CONFIG_MMC
           ./scripts/config --enable CONFIG_DM_MMC
           ./scripts/config --enable CONFIG_MMC_SUNXI
@@ -103,20 +111,30 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_FAT
           ./scripts/config --enable CONFIG_CMD_FS_GENERIC
 
-          # OTG peripheral 模式
+          # OTG 使用 peripheral 模式
           sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' \
             arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
-          # 确认 eMMC 引用的引脚标签存在，防止再次因标签名错误而编译失败
-          
+          if [ "$SD_CD" = "ignore" ]; then
+            SD_CD_PROPERTY="broken-cd;"
+          else
+            SD_CD_PROPERTY="cd-gpios = <&pio 1 4 1>;"
+          fi
 
-          # 定义 SD PF0-PF5 引脚组，并配置 SD、eMMC、USB 节点
+          # SD 使用 PF0-PF5；eMMC 使用 MMC2 的 PC 引脚
           cat <<EOF >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &pio {
-              a33_mmc0_pins: a33-mmc0-pins {
+              a33_sd_test_pins: a33-sd-test-pins {
                   pins = "PF0", "PF1", "PF2", "PF3", "PF4", "PF5";
                   function = "mmc0";
+                  drive-strength = <30>;
+                  bias-pull-up;
+              };
+
+              a33_emmc_test_pins: a33-emmc-test-pins {
+                  pins = "PC5", "PC6", "PC8", "PC9", "PC10", "PC16";
+                  function = "mmc2";
                   drive-strength = <30>;
                   bias-pull-up;
               };
@@ -124,19 +142,19 @@ jobs:
 
           &mmc0 {
               pinctrl-names = "default";
-              pinctrl-0 = <&a33_mmc0_pins>;
+              pinctrl-0 = <&a33_sd_test_pins>;
               vmmc-supply = <&reg_dcdc1>;
-              cd-gpios = <&pio 1 4 1>;
-              bus-width = <${SD_WIDTH}>;
-              max-frequency = <${SD_FREQ}>;
+              $SD_CD_PROPERTY
+              bus-width = <$SD_WIDTH>;
+              max-frequency = <$SD_FREQ>;
               status = "okay";
           };
 
           &mmc2 {
               pinctrl-names = "default";
-              pinctrl-0 = <&mmc2_8bit_pins>;
+              pinctrl-0 = <&a33_emmc_test_pins>;
               vmmc-supply = <&reg_dcdc1>;
-              bus-width = <8>;
+              bus-width = <4>;
               non-removable;
               cap-mmc-hw-reset;
               status = "okay";
@@ -160,7 +178,7 @@ jobs:
           };
           EOF
 
-          # 保留原有 USB-A 供电、USB 键盘输入和显示/串口输出
+          # 保留 USB-A 供电、键盘输入和显示/串口输出
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
           ./scripts/config --set-str CONFIG_BOOTCOMMAND \
             "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC DEVICES ===; mmc list; echo === READY ==="
