@@ -1,4 +1,4 @@
-name: A33 Full Storage (SD + eMMC) + Screen + USB Kbd
+name: A33 All-In-One (Screen + 4bit eMMC + SD + USB-A Kbd)
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
           path: u-boot
           fetch-depth: 1
 
-      - name: 编译全功能版 (屏幕 + USB键盘 + SD卡 + eMMC)
+      - name: 编译全功能共存版
         working-directory: ./u-boot
         run: |
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
@@ -43,7 +43,7 @@ jobs:
           ./scripts/config --enable CONFIG_DM_I2C
           ./scripts/config --enable CONFIG_CMD_I2C
 
-          # 3. 保持已验证成功的 USB0 Fastboot + USB1 Host + USB键盘
+          # 3. 保持已验证成功的 USB0 Fastboot + USB1 EHCI/OHCI + USB键盘
           ./scripts/config --enable CONFIG_USB
           ./scripts/config --enable CONFIG_PHY_SUN4I_USB
           ./scripts/config --enable CONFIG_USB_MUSB_SUNXI
@@ -61,7 +61,7 @@ jobs:
           ./scripts/config --enable CONFIG_USB_FUNCTION_FASTBOOT
           ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # 4. 完整开启 SD卡 (MMC0) + 板载 eMMC (MMC2, 8-bit) + GPT/MBR分区 + EXT4/FAT读写 + UMS虚拟U盘
+          # 4. 开启 SD卡 (MMC0) + 板载 eMMC (MMC2) + 分区表 + 文件系统 + UMS虚拟U盘
           ./scripts/config --enable CONFIG_MMC
           ./scripts/config --enable CONFIG_MMC_SUNXI
           ./scripts/config --set-val CONFIG_MMC_SUNXI_SLOT_EXTRA 2
@@ -78,7 +78,7 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_USB_MASS_STORAGE
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
 
-          # 5. 在设备树中激活 I2C0/1/2、USB、以及 mmc0 (SD卡) 和 mmc2 (8-bit eMMC)
+          # 5. 关键修正：mmc2 改为 4-bit 模式，释放 PC12~PC15 引脚供 USB-A 5V 供电使用！
           cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &i2c0 {
@@ -114,24 +114,24 @@ jobs:
 
           &mmc2 {
               pinctrl-names = "default";
-              pinctrl-0 = <&mmc2_8bit_pins>;
+              pinctrl-0 = <&mmc2_4bit_pins>;
               vmmc-supply = <&reg_dcdc1>;
-              bus-width = <8>;
+              bus-width = <4>;
               non-removable;
               cap-mmc-hw-reset;
               status = "okay";
           };
           EOF
 
-          # 6. 开机自动拉高 USB-A 供电脚(不触碰PC12以免影响eMMC)，自动扫描存储设备并绑定USB键盘
+          # 6. 恢复拉高 PC12（USB-A 5V 供电开关）并绑定 USB 键盘，同时扫描存储设备
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; sleep 1; usb start; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC DEVICES ===; mmc list; mmc dev 0; mmc info; mmc dev 1; mmc info"
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PC12; gpio set PH6; gpio set PH11; gpio set PB2; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC STATUS ===; mmc list; mmc dev 0; mmc info; mmc dev 1; mmc info"
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
 
-      - name: 打包全功能固件
+      - name: 打包全功能共存版固件
         uses: actions/upload-artifact@v4
         with:
-          name: a33-full-storage-screen-usbkbd
+          name: a33-all-in-one-uboot-spl
           path: u-boot/u-boot-sunxi-with-spl.bin
