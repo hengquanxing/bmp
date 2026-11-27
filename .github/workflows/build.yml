@@ -38,7 +38,7 @@ jobs:
           ./scripts/config --enable CONFIG_SYS_CONSOLE_IS_IN_ENV
           ./scripts/config --enable CONFIG_VIDCONSOLE_AS_LCD
 
-          # 2. 开启 I2C0 / I2C1 / I2C2 总线（保留后续内核触摸与RTC支持）
+          # 2. 开启 I2C0 / I2C1 / I2C2 总线
           ./scripts/config --enable CONFIG_SYS_I2C_MVTWSI
           ./scripts/config --enable CONFIG_DM_I2C
           ./scripts/config --enable CONFIG_CMD_I2C
@@ -129,9 +129,9 @@ jobs:
           };
           EOF
 
-          # 6. 开机直接开启 USB-A 供电、绑定键盘，打印 eMMC 分区表并自动挂载为 UMS 大容量存储设备
+          # 6. 开机直接开启 USB-A 供电、绑定键盘，打印 eMMC 分区表并自动挂载为 UMS 大容量存储设备（无 & 符号）
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb start; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC INFO & PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === MOUNTING EMMC TO OTG USB (Ctrl+C to exit) ===; ums 0 mmc 0"
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb start; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC INFO AND PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === MOUNTING EMMC TO OTG USB ===; ums 0 mmc 0"
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
