@@ -15,19 +15,12 @@ jobs:
           - emmc-only
           - sd-only
           - emmc-and-sd
-        include:
-          - variant: emmc-only
-            mmc0_status: disabled
-            mmc2_status: okay
-            extra_bootcmd: ""
-          - variant: sd-only
-            mmc0_status: okay
-            mmc2_status: disabled
-            extra_bootcmd: ""
-          - variant: emmc-and-sd
-            mmc0_status: okay
-            mmc2_status: okay
-            extra_bootcmd: "; mmc list"
+        mmc0_status:
+          - disabled
+          - okay
+        mmc2_status:
+          - okay
+          - disabled
     steps:
 - name: 安装交叉编译环境
         run: |
@@ -162,7 +155,7 @@ jobs:
 
           # 6. 开机直接开启 USB-A 供电、绑定键盘，打印 eMMC 分区表后停留在 => 命令行（不阻塞键盘）
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === READY: Type ums 0 mmc 0 to mount eMMC ===${{ matrix.extra_bootcmd }}"
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === READY: Type ums 0 mmc 0 to mount eMMC ==="
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
@@ -170,5 +163,5 @@ jobs:
 - name: 打包固件
         uses: actions/upload-artifact@v4
         with:
-          name: a33-emmc-ums-kbd-ready-${{ matrix.variant }}
+          name: a33-emmc-ums-kbd-ready-${{ matrix.variant }}-${{ matrix.mmc0_status }}-${{ matrix.mmc2_status }}
           path: u-boot/u-boot-sunxi-with-spl.bin
