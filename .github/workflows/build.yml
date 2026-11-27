@@ -1,4 +1,4 @@
-name: A33 SD MMC Test Builds
+name: A33 SD eMMC Test 1-4
 
 on:
   workflow_dispatch:
@@ -13,29 +13,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 测试 1：启用 SD 对应的 MMC0，保留设备树默认总线设置
-          - variant: sd-default
+          - id: "1"
             sd_width: "4"
             sd_freq: "50000000"
-            emmc: "yes"
-
-          # 测试 2：SD 使用 1-bit，低频率
-          - variant: sd-1bit-25mhz
+          - id: "2"
             sd_width: "1"
             sd_freq: "25000000"
-            emmc: "yes"
-
-          # 测试 3：SD 使用 4-bit，低频率
-          - variant: sd-4bit-25mhz
+          - id: "3"
             sd_width: "4"
             sd_freq: "25000000"
-            emmc: "yes"
-
-          # 测试 4：仅启用 SD，临时关闭 eMMC 节点以排查设备编号/探测干扰
-          - variant: sd-only
-            sd_width: "4"
-            sd_freq: "25000000"
-            emmc: "no"
+          - id: "4"
+            sd_width: "1"
+            sd_freq: "50000000"
 
     steps:
       - name: 安装交叉编译环境
@@ -51,19 +40,17 @@ jobs:
           path: u-boot
           fetch-depth: 1
 
-      - name: 配置和编译
+      - name: 配置 MMC 测试版本 ${{ matrix.id }}
         working-directory: ./u-boot
         env:
-          VARIANT: ${{ matrix.variant }}
           SD_WIDTH: ${{ matrix.sd_width }}
           SD_FREQ: ${{ matrix.sd_freq }}
-          EMMC: ${{ matrix.emmc }}
         run: |
           set -eux
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
 
-          # 屏幕、I2C、USB、键盘、UMS、文件系统等沿用原配置
+          # 屏幕配置
           ./scripts/config --enable CONFIG_VIDEO_SUNXI
           ./scripts/config --enable CONFIG_VIDEO_LCD_IF_PARALLEL
           ./scripts/config --disable CONFIG_VIDEO_LCD_IF_LVDS
@@ -74,10 +61,12 @@ jobs:
           ./scripts/config --enable CONFIG_SYS_CONSOLE_IS_IN_ENV
           ./scripts/config --enable CONFIG_VIDCONSOLE_AS_LCD
 
+          # I2C
           ./scripts/config --enable CONFIG_SYS_I2C_MVTWSI
           ./scripts/config --enable CONFIG_DM_I2C
           ./scripts/config --enable CONFIG_CMD_I2C
 
+          # USB OTG、USB Host、键盘、UMS、Fastboot
           ./scripts/config --enable CONFIG_USB
           ./scripts/config --enable CONFIG_PHY_SUN4I_USB
           ./scripts/config --enable CONFIG_USB_MUSB_SUNXI
@@ -97,7 +86,9 @@ jobs:
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
           ./scripts/config --enable CONFIG_CMD_GPIO
 
+          # MMC / SD / eMMC
           ./scripts/config --enable CONFIG_MMC
+          ./scripts/config --enable CONFIG_DM_MMC
           ./scripts/config --enable CONFIG_MMC_SUNXI
           ./scripts/config --set-val CONFIG_MMC_SUNXI_SLOT_EXTRA 2
           ./scripts/config --enable CONFIG_SUPPORT_EMMC_BOOT
@@ -111,12 +102,12 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_FAT
           ./scripts/config --enable CONFIG_CMD_FS_GENERIC
 
-          # 改为 USB OTG 外设模式
+          # USB OTG 设为 peripheral
           sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' \
             arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
-          # 不要重复追加 DT 节点；检查并清理之前可能遗留的同名追加块。
-          # 在干净 checkout 中，这段会为每个矩阵构建追加一次。
+          # 保留原有 pinctrl、电源、卡检测等属性，只覆盖测试参数。
+          # mmc2 为 eMMC；不在任何测试版本中关闭它。
           cat <<EOF >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &mmc0 {
@@ -126,7 +117,7 @@ jobs:
           };
 
           &mmc2 {
-              status = "$( [ "$EMMC" = "yes" ] && echo okay || echo disabled )";
+              status = "okay";
           };
 
           &usbphy {
@@ -147,16 +138,16 @@ jobs:
           };
           EOF
 
-          # 启动时输出 MMC 设备信息；不要在这里预设 SD 一定是 mmc 0
+          # 保留交互式命令行；启动时不自动切换 MMC 设备
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
           ./scripts/config --set-str CONFIG_BOOTCOMMAND \
-            "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC LIST ===; mmc list; echo === MMC 0 ===; mmc dev 0; mmc info; echo === MMC 1 ===; mmc dev 1; mmc info; echo === MMC 2 ===; mmc dev 2; mmc info; echo === MMC PARTITIONS ===; mmc part; echo === READY ==="
+            "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC LIST ===; mmc list; echo === READY ==="
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j"$(nproc)"
 
-      - name: 打包测试固件
+      - name: 上传测试固件 ${{ matrix.id }}
         uses: actions/upload-artifact@v4
         with:
-          name: a33-${{ matrix.variant }}
+          name: ${{ matrix.id }}
           path: u-boot/u-boot-sunxi-with-spl.bin
