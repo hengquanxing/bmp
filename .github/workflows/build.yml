@@ -1,33 +1,69 @@
-name: A33 eMMC UMS + Screen + USB-A Kbd (Peripheral Fix)
+name: A33 SD MMC Test Builds
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
 
 jobs:
-  build_emmc:
+  build:
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 测试 1：启用 SD 对应的 MMC0，保留设备树默认总线设置
+          - variant: sd-default
+            sd_width: "4"
+            sd_freq: "50000000"
+            emmc: "yes"
+
+          # 测试 2：SD 使用 1-bit，低频率
+          - variant: sd-1bit-25mhz
+            sd_width: "1"
+            sd_freq: "25000000"
+            emmc: "yes"
+
+          # 测试 3：SD 使用 4-bit，低频率
+          - variant: sd-4bit-25mhz
+            sd_width: "4"
+            sd_freq: "25000000"
+            emmc: "yes"
+
+          # 测试 4：仅启用 SD，临时关闭 eMMC 节点以排查设备编号/探测干扰
+          - variant: sd-only
+            sd_width: "4"
+            sd_freq: "25000000"
+            emmc: "no"
+
     steps:
-- name: 安装交叉编译环境
+      - name: 安装交叉编译环境
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-arm-linux-gnueabihf build-essential bison flex \
             libssl-dev device-tree-compiler python3-setuptools python3-dev swig
 
-- name: 拉取主线 U-Boot 源码
+      - name: 拉取主线 U-Boot 源码
         uses: actions/checkout@v4
         with:
           repository: u-boot/u-boot
           path: u-boot
           fetch-depth: 1
 
-- name: 编译 eMMC UMS + 键盘交互版
+      - name: 配置和编译
         working-directory: ./u-boot
+        env:
+          VARIANT: ${{ matrix.variant }}
+          SD_WIDTH: ${{ matrix.sd_width }}
+          SD_FREQ: ${{ matrix.sd_freq }}
+          EMMC: ${{ matrix.emmc }}
         run: |
+          set -eux
+
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
 
-          # 1. 保持已验证完美的 1024x600 RGB666 屏幕与背光配置
+          # 屏幕、I2C、USB、键盘、UMS、文件系统等沿用原配置
           ./scripts/config --enable CONFIG_VIDEO_SUNXI
           ./scripts/config --enable CONFIG_VIDEO_LCD_IF_PARALLEL
           ./scripts/config --disable CONFIG_VIDEO_LCD_IF_LVDS
@@ -38,12 +74,10 @@ jobs:
           ./scripts/config --enable CONFIG_SYS_CONSOLE_IS_IN_ENV
           ./scripts/config --enable CONFIG_VIDCONSOLE_AS_LCD
 
-          # 2. 开启 I2C0 / I2C1 / I2C2 总线
           ./scripts/config --enable CONFIG_SYS_I2C_MVTWSI
           ./scripts/config --enable CONFIG_DM_I2C
           ./scripts/config --enable CONFIG_CMD_I2C
 
-          # 3. 全面开启 USB0 OTG (UMS + Fastboot) + USB1 Host + USB键盘
           ./scripts/config --enable CONFIG_USB
           ./scripts/config --enable CONFIG_PHY_SUN4I_USB
           ./scripts/config --enable CONFIG_USB_MUSB_SUNXI
@@ -63,7 +97,6 @@ jobs:
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
           ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # 4. 仅启用板载 eMMC (MMC2) 与完整分区表/文件系统支持
           ./scripts/config --enable CONFIG_MMC
           ./scripts/config --enable CONFIG_MMC_SUNXI
           ./scripts/config --set-val CONFIG_MMC_SUNXI_SLOT_EXTRA 2
@@ -78,30 +111,22 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_FAT
           ./scripts/config --enable CONFIG_CMD_FS_GENERIC
 
-          # 5. 关键补回：强制将 usb_otg 设为纯从机(peripheral)，否则Linux电脑无法识别 UMS/Fastboot！
-          sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
+          # 改为 USB OTG 外设模式
+          sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' \
+            arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
-          cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
+          # 不要重复追加 DT 节点；检查并清理之前可能遗留的同名追加块。
+          # 在干净 checkout 中，这段会为每个矩阵构建追加一次。
+          cat <<EOF >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
-          &pio {
-              mmc2_4bit_pins: mmc2-4bit-pins {
-                  pins = "PC5", "PC6", "PC8", "PC9", "PC10", "PC16";
-                  function = "mmc2";
-                  drive-strength = <30>;
-                  bias-pull-up;
-              };
+          &mmc0 {
+              status = "okay";
+              bus-width = <${SD_WIDTH}>;
+              max-frequency = <${SD_FREQ}>;
           };
 
-          &i2c0 {
-              status = "okay";
-          };
-
-          &i2c1 {
-              status = "okay";
-          };
-
-          &i2c2 {
-              status = "okay";
+          &mmc2 {
+              status = "$( [ "$EMMC" = "yes" ] && echo okay || echo disabled )";
           };
 
           &usbphy {
@@ -120,178 +145,18 @@ jobs:
           &ohci0 {
               status = "okay";
           };
-
-          &mmc0 {
-              status = "disabled";
-          };
-
-          &mmc2 {
-              pinctrl-names = "default";
-              pinctrl-0 = <&mmc2_4bit_pins>;
-              vmmc-supply = <&reg_dcdc1>;
-              bus-width = <4>;
-              non-removable;
-              cap-mmc-hw-reset;
-              status = "okay";
-          };
           EOF
 
-          # 6. 开机直接开启 USB-A 供电、绑定键盘，打印 eMMC 分区表后停留在 => 命令行（不阻塞键盘）
+          # 启动时输出 MMC 设备信息；不要在这里预设 SD 一定是 mmc 0
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === READY: Type ums 0 mmc 0 to mount eMMC ==="
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND \
+            "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC LIST ===; mmc list; echo === MMC 0 ===; mmc dev 0; mmc info; echo === MMC 1 ===; mmc dev 1; mmc info; echo === MMC 2 ===; mmc dev 2; mmc info; echo === MMC PARTITIONS ===; mmc part; echo === READY ==="
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
-          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j"$(nproc)"
 
-- name: 打包固件
+      - name: 打包测试固件
         uses: actions/upload-artifact@v4
         with:
-          name: a33-emmc-ums-kbd-ready
-          path: u-boot/u-boot-sunxi-with-spl.bin
-
-  build_sd_test:
-    runs-on: ubuntu-latest
-    steps:
-- name: 安装交叉编译环境
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabihf build-essential bison flex \
-            libssl-dev device-tree-compiler python3-setuptools python3-dev swig
-
-- name: 拉取主线 U-Boot 源码
-        uses: actions/checkout@v4
-        with:
-          repository: u-boot/u-boot
-          path: u-boot
-          fetch-depth: 1
-
-- name: 编译 SD 卡测试版
-        working-directory: ./u-boot
-        run: |
-          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
-
-          # 1. 保持已验证完美的 1024x600 RGB666 屏幕与背光配置
-          ./scripts/config --enable CONFIG_VIDEO_SUNXI
-          ./scripts/config --enable CONFIG_VIDEO_LCD_IF_PARALLEL
-          ./scripts/config --disable CONFIG_VIDEO_LCD_IF_LVDS
-          ./scripts/config --set-str CONFIG_VIDEO_LCD_MODE "x:1024,y:600,depth:18,pclk_khz:51000,le:159,ri:160,up:22,lo:12,hs:1,vs:1,sync:3,vmode:0"
-          ./scripts/config --set-str CONFIG_VIDEO_LCD_BL_EN "PH7"
-          ./scripts/config --set-str CONFIG_VIDEO_LCD_BL_PWM "PH0"
-          ./scripts/config --enable CONFIG_CONSOLE_MUX
-          ./scripts/config --enable CONFIG_SYS_CONSOLE_IS_IN_ENV
-          ./scripts/config --enable CONFIG_VIDCONSOLE_AS_LCD
-
-          # 2. 开启 I2C0 / I2C1 / I2C2 总线
-          ./scripts/config --enable CONFIG_SYS_I2C_MVTWSI
-          ./scripts/config --enable CONFIG_DM_I2C
-          ./scripts/config --enable CONFIG_CMD_I2C
-
-          # 3. 全面开启 USB0 OTG (UMS + Fastboot) + USB1 Host + USB键盘
-          ./scripts/config --enable CONFIG_USB
-          ./scripts/config --enable CONFIG_PHY_SUN4I_USB
-          ./scripts/config --enable CONFIG_USB_MUSB_SUNXI
-          ./scripts/config --enable CONFIG_USB_MUSB_GADGET
-          ./scripts/config --enable CONFIG_USB_EHCI_HCD
-          ./scripts/config --enable CONFIG_USB_EHCI_SUNXI
-          ./scripts/config --enable CONFIG_USB_OHCI_HCD
-          ./scripts/config --enable CONFIG_USB_OHCI_SUNXI
-          ./scripts/config --enable CONFIG_CMD_USB
-          ./scripts/config --enable CONFIG_USB_KEYBOARD
-          ./scripts/config --enable CONFIG_SYS_USB_EVENT_POLL_VIA_INT_QUEUE
-          ./scripts/config --enable CONFIG_USB_GADGET
-          ./scripts/config --enable CONFIG_USB_GADGET_DOWNLOAD
-          ./scripts/config --enable CONFIG_CMD_FASTBOOT
-          ./scripts/config --enable CONFIG_USB_FUNCTION_FASTBOOT
-          ./scripts/config --enable CONFIG_CMD_USB_MASS_STORAGE
-          ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
-          ./scripts/config --enable CONFIG_CMD_GPIO
-
-          # 4. 启用 MMC 与完整分区表/文件系统支持
-          ./scripts/config --enable CONFIG_MMC
-          ./scripts/config --enable CONFIG_MMC_SUNXI
-          ./scripts/config --set-val CONFIG_MMC_SUNXI_SLOT_EXTRA 2
-          ./scripts/config --enable CONFIG_SUPPORT_EMMC_BOOT
-          ./scripts/config --enable CONFIG_CMD_MMC
-          ./scripts/config --enable CONFIG_CMD_PART
-          ./scripts/config --enable CONFIG_CMD_GPT
-          ./scripts/config --enable CONFIG_PARTITION_UUIDS
-          ./scripts/config --enable CONFIG_EFI_PARTITION
-          ./scripts/config --enable CONFIG_DOS_PARTITION
-          ./scripts/config --enable CONFIG_CMD_EXT4
-          ./scripts/config --enable CONFIG_CMD_FAT
-          ./scripts/config --enable CONFIG_CMD_FS_GENERIC
-
-          # 5. 强制将 usb_otg 设为纯从机(peripheral)，并启用 mmc0 (SD)
-          sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
-
-          cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
-
-          &pio {
-              mmc2_4bit_pins: mmc2-4bit-pins {
-                  pins = "PC5", "PC6", "PC8", "PC9", "PC10", "PC16";
-                  function = "mmc2";
-                  drive-strength = <30>;
-                  bias-pull-up;
-              };
-          };
-
-          &i2c0 {
-              status = "okay";
-          };
-
-          &i2c1 {
-              status = "okay";
-          };
-
-          &i2c2 {
-              status = "okay";
-          };
-
-          &usbphy {
-              status = "okay";
-          };
-
-          &usb_otg {
-              dr_mode = "peripheral";
-              status = "okay";
-          };
-
-          &ehci0 {
-              status = "okay";
-          };
-
-          &ohci0 {
-              status = "okay";
-          };
-
-          &mmc0 {
-              pinctrl-names = "default";
-              pinctrl-0 = <&mmc0_pins>;
-              bus-width = <4>;
-              cd-gpios = <&pio 1 4 1>;
-              status = "okay";
-          };
-
-          &mmc2 {
-              pinctrl-names = "default";
-              pinctrl-0 = <&mmc2_4bit_pins>;
-              vmmc-supply = <&reg_dcdc1>;
-              bus-width = <4>;
-              non-removable;
-              cap-mmc-hw-reset;
-              status = "disabled";
-          };
-          EOF
-
-          # 6. 开机直接开启 USB-A 供电、绑定键盘，打印 MMC 信息后停留在 => 命令行
-          ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC LIST ===; mmc list; mmc dev 0; mmc info; mmc part; echo === READY ==="
-
-          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
-          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
-
-- name: 打包固件
-        uses: actions/upload-artifact@v4
-        with:
-          name: a33-sd-test-ready
+          name: a33-${{ matrix.variant }}
           path: u-boot/u-boot-sunxi-with-spl.bin
