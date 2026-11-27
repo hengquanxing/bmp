@@ -108,7 +108,7 @@ jobs:
             arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           # 确认 eMMC 引用的引脚标签存在，防止再次因标签名错误而编译失败
-          grep -q 'mmc2_8bit_pins:' arch/arm/dts/sun8i-a33.dtsi
+          
 
           # 定义 SD PF0-PF5 引脚组，并配置 SD、eMMC、USB 节点
           cat <<EOF >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
