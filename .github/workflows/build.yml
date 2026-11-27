@@ -1,4 +1,4 @@
-name: A33 SD eMMC Test 1-4
+name: A33 SD Pinmux Tests 1-4
 
 on:
   workflow_dispatch:
@@ -27,20 +27,20 @@ jobs:
             sd_freq: "50000000"
 
     steps:
-      - name: 安装交叉编译环境
+      - name: 安装编译环境
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-arm-linux-gnueabihf build-essential bison flex \
             libssl-dev device-tree-compiler python3-setuptools python3-dev swig
 
-      - name: 拉取主线 U-Boot 源码
+      - name: 拉取 U-Boot
         uses: actions/checkout@v4
         with:
           repository: u-boot/u-boot
           path: u-boot
           fetch-depth: 1
 
-      - name: 配置 MMC 测试版本 ${{ matrix.id }}
+      - name: 配置并编译版本 ${{ matrix.id }}
         working-directory: ./u-boot
         env:
           SD_WIDTH: ${{ matrix.sd_width }}
@@ -50,23 +50,17 @@ jobs:
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
 
-          # 屏幕配置
-          ./scripts/config --enable CONFIG_VIDEO_SUNXI
-          ./scripts/config --enable CONFIG_VIDEO_LCD_IF_PARALLEL
-          ./scripts/config --disable CONFIG_VIDEO_LCD_IF_LVDS
-          ./scripts/config --set-str CONFIG_VIDEO_LCD_MODE "x:1024,y:600,depth:18,pclk_khz:51000,le:159,ri:160,up:22,lo:12,hs:1,vs:1,sync:3,vmode:0"
-          ./scripts/config --set-str CONFIG_VIDEO_LCD_BL_EN "PH7"
-          ./scripts/config --set-str CONFIG_VIDEO_LCD_BL_PWM "PH0"
-          ./scripts/config --enable CONFIG_CONSOLE_MUX
-          ./scripts/config --enable CONFIG_SYS_CONSOLE_IS_IN_ENV
-          ./scripts/config --enable CONFIG_VIDCONSOLE_AS_LCD
+          ./scripts/config --enable CONFIG_MMC
+          ./scripts/config --enable CONFIG_DM_MMC
+          ./scripts/config --enable CONFIG_MMC_SUNXI
+          ./scripts/config --set-val CONFIG_MMC_SUNXI_SLOT_EXTRA 2
+          ./scripts/config --enable CONFIG_SUPPORT_EMMC_BOOT
+          ./scripts/config --enable CONFIG_CMD_MMC
+          ./scripts/config --enable CONFIG_CMD_PART
+          ./scripts/config --enable CONFIG_CMD_GPT
+          ./scripts/config --enable CONFIG_EFI_PARTITION
+          ./scripts/config --enable CONFIG_DOS_PARTITION
 
-          # I2C
-          ./scripts/config --enable CONFIG_SYS_I2C_MVTWSI
-          ./scripts/config --enable CONFIG_DM_I2C
-          ./scripts/config --enable CONFIG_CMD_I2C
-
-          # USB OTG、USB Host、键盘、UMS、Fastboot
           ./scripts/config --enable CONFIG_USB
           ./scripts/config --enable CONFIG_PHY_SUN4I_USB
           ./scripts/config --enable CONFIG_USB_MUSB_SUNXI
@@ -77,50 +71,26 @@ jobs:
           ./scripts/config --enable CONFIG_USB_OHCI_SUNXI
           ./scripts/config --enable CONFIG_CMD_USB
           ./scripts/config --enable CONFIG_USB_KEYBOARD
-          ./scripts/config --enable CONFIG_SYS_USB_EVENT_POLL_VIA_INT_QUEUE
           ./scripts/config --enable CONFIG_USB_GADGET
           ./scripts/config --enable CONFIG_USB_GADGET_DOWNLOAD
-          ./scripts/config --enable CONFIG_CMD_FASTBOOT
-          ./scripts/config --enable CONFIG_USB_FUNCTION_FASTBOOT
           ./scripts/config --enable CONFIG_CMD_USB_MASS_STORAGE
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
-          ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # MMC / SD / eMMC
-          ./scripts/config --enable CONFIG_MMC
-          ./scripts/config --enable CONFIG_DM_MMC
-          ./scripts/config --enable CONFIG_MMC_SUNXI
-          ./scripts/config --set-val CONFIG_MMC_SUNXI_SLOT_EXTRA 2
-          ./scripts/config --enable CONFIG_SUPPORT_EMMC_BOOT
-          ./scripts/config --enable CONFIG_CMD_MMC
-          ./scripts/config --enable CONFIG_CMD_PART
-          ./scripts/config --enable CONFIG_CMD_GPT
-          ./scripts/config --enable CONFIG_PARTITION_UUIDS
-          ./scripts/config --enable CONFIG_EFI_PARTITION
-          ./scripts/config --enable CONFIG_DOS_PARTITION
-          ./scripts/config --enable CONFIG_CMD_EXT4
-          ./scripts/config --enable CONFIG_CMD_FAT
-          ./scripts/config --enable CONFIG_CMD_FS_GENERIC
-
-          # USB OTG 设为 peripheral
           sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' \
             arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
-          # 保留原有 pinctrl、电源、卡检测等属性，只覆盖测试参数。
-          # mmc2 为 eMMC；不在任何测试版本中关闭它。
           cat <<EOF >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &mmc0 {
-              status = "okay";
+              pinctrl-names = "default";
+              pinctrl-0 = <&mmc0_pins>;
+              cd-gpios = <&pio 1 4 1>;
               bus-width = <${SD_WIDTH}>;
               max-frequency = <${SD_FREQ}>;
+              status = "okay";
           };
 
           &mmc2 {
-              status = "okay";
-          };
-
-          &usbphy {
               status = "okay";
           };
 
@@ -128,25 +98,16 @@ jobs:
               dr_mode = "peripheral";
               status = "okay";
           };
-
-          &ehci0 {
-              status = "okay";
-          };
-
-          &ohci0 {
-              status = "okay";
-          };
           EOF
 
-          # 保留交互式命令行；启动时不自动切换 MMC 设备
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
           ./scripts/config --set-str CONFIG_BOOTCOMMAND \
-            "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC LIST ===; mmc list; echo === READY ==="
+            "setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC DEVICES ===; mmc list; echo === READY ==="
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j"$(nproc)"
 
-      - name: 上传测试固件 ${{ matrix.id }}
+      - name: 上传固件 ${{ matrix.id }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.id }}
