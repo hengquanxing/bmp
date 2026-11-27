@@ -1,4 +1,4 @@
-name: A33 USB 6-Variant Blind Test
+name: A33 RGB666 Screen + USB Blind Test
 
 on:
   workflow_dispatch:
@@ -12,53 +12,41 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - name: "01_dts_force_peripheral_fastboot"
+          # 版本1：RGB666亮屏 + 强改USB0为纯从机(Peripheral) + Fastboot
+          - name: "01_rgb_peripheral_fastboot"
             patch_dts: "yes"
             id_det: ""
             vbus_det: ""
             vbus_pin: ""
             usb_host: "no"
-            cmd: "echo === USB0 PERIPHERAL FASTBOOT ===; fastboot 0"
+            cmd: "echo === RGB SCREEN OK - FASTBOOT ===; fastboot 0"
 
-          - name: "02_dts_force_peripheral_usbacm"
+          # 版本2：RGB666亮屏 + 强改USB0为纯从机 + USB虚拟串口(CDC ACM)
+          - name: "02_rgb_peripheral_usbacm"
             patch_dts: "yes"
             id_det: ""
             vbus_det: ""
             vbus_pin: ""
             usb_host: "no"
-            cmd: "echo === STARTING USB ACM SERIAL ===; setenv stdout vidconsole,usbacm; setenv stderr vidconsole,usbacm; setenv stdin serial,usbacm"
+            cmd: "echo === RGB SCREEN OK - USB ACM ===; setenv stdout vidconsole,usbacm; setenv stderr vidconsole,usbacm; setenv stdin serial,usbacm"
 
-          - name: "03_axp223_vbus_fastboot"
+          # 版本3：RGB666亮屏 + AXP223 VBUS检测 + Fastboot
+          - name: "03_rgb_axp223_fastboot"
             patch_dts: "no"
             id_det: ""
             vbus_det: "axp_vbus"
             vbus_pin: ""
             usb_host: "no"
-            cmd: "echo === AXP_VBUS FASTBOOT ===; fastboot 0"
+            cmd: "echo === RGB AXP_VBUS FASTBOOT ===; fastboot 0"
 
-          - name: "04_pin_ph9_ph10_fastboot"
+          # 版本4：RGB666亮屏 + USB1 Host主机模式（接USB键盘/U盘测试）
+          - name: "04_rgb_usb1_host_kbd"
             patch_dts: "no"
-            id_det: "PH9"
-            vbus_det: "PH10"
-            vbus_pin: ""
-            usb_host: "no"
-            cmd: "echo === PH9_PH10 FASTBOOT ===; fastboot 0"
-
-          - name: "05_usb1_host_kbd_scan"
-            patch_dts: "no"
-            id_det: "PH8"
-            vbus_det: ""
-            vbus_pin: "PH11"
-            usb_host: "yes"
-            cmd: "echo === SCANNING USB HOST ===; usb start; usb tree; usb info"
-
-          - name: "06_screen_console_diag"
-            patch_dts: "yes"
             id_det: ""
             vbus_det: ""
             vbus_pin: ""
             usb_host: "yes"
-            cmd: "echo === SCREEN CONSOLE OK ===; bdinfo; dm tree"
+            cmd: "echo === SCANNING USB1 HOST ===; usb start; usb tree; usb info"
 
     steps:
       - name: 安装交叉编译环境
@@ -68,16 +56,21 @@ jobs:
             libssl-dev device-tree-compiler python3-setuptools python3-dev swig
 
       - name: 拉取主线 U-Boot 源码
-        run: git clone https://github.com/u-boot/u-boot.git --depth=1
+        run: git clone https://github.com --depth=1
 
-      - name: 应用配置并编译 [${{ matrix.variant.name }}]
+      - name: 应用 RGB666 屏幕与 USB 配置 [${{ matrix.variant.name }}]
         working-directory: ./u-boot
         run: |
-          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- ga10h_v1_1_defconfig
+          # 使用原生 RGB666 (PD10~PD27) 的 Sinlinx_SinA33 作为基础配置
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
 
-          # 1. 强制将标准输出绑定到 10.1寸(1024x600) 屏幕
+          # 1. 写入你原固件中提取的精确 1024x600 RGB666 屏幕参数与背光引脚
           ./scripts/config --enable CONFIG_VIDEO_SUNXI
-          ./scripts/config --set-str CONFIG_VIDEO_LCD_MODE "x:1024,y:600,depth:18,pclk_khz:51200,le:160,ri:160,up:23,lo:12,hs:1,vs:1,sync:3,vmode:0"
+          ./scripts/config --enable CONFIG_VIDEO_LCD_IF_PARALLEL
+          ./scripts/config --disable CONFIG_VIDEO_LCD_IF_LVDS
+          ./scripts/config --set-str CONFIG_VIDEO_LCD_MODE "x:1024,y:600,depth:18,pclk_khz:51000,le:159,ri:160,up:22,lo:12,hs:1,vs:1,sync:3,vmode:0"
+          ./scripts/config --set-str CONFIG_VIDEO_LCD_BL_EN "PH7"
+          ./scripts/config --set-str CONFIG_VIDEO_LCD_BL_PWM "PH0"
           ./scripts/config --enable CONFIG_CONSOLE_MUX
           ./scripts/config --enable CONFIG_SYS_CONSOLE_IS_IN_ENV
           ./scripts/config --enable CONFIG_VIDCONSOLE_AS_LCD
@@ -91,7 +84,6 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_FASTBOOT
           ./scripts/config --enable CONFIG_USB_FUNCTION_FASTBOOT
           ./scripts/config --enable CONFIG_USB_FUNCTION_ACM
-          ./scripts/config --enable CONFIG_USB_ETHER
 
           # 3. 若需要测试 USB1 Host（接键盘/U盘），开启 EHCI/OHCI 与 USB 键盘支持
           if [ "${{ matrix.variant.usb_host }}" = "yes" ]; then
@@ -103,9 +95,9 @@ jobs:
             ./scripts/config --enable CONFIG_USB_KEYBOARD
           fi
 
-          # 4. 强改设备树：绕过 ga10h_v1_1 底板差异，强制把 usb_otg 设为纯从机模式
+          # 4. 强改设备树：绕过底板引脚差异，强制将 usb_otg 设为纯从机模式
           if [ "${{ matrix.variant.patch_dts }}" = "yes" ]; then
-            sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' arch/arm/dts/sun8i-a33-ga10h-v1.1.dts
+            sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
           fi
 
           # 5. 设置 USB 引脚与开机自启命令
