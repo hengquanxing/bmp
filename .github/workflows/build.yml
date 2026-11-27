@@ -1,4 +1,4 @@
-name: A33 All-In-One (Screen + eMMC + SD + USB-A Kbd Fix)
+name: A33 Final Complete (Screen + USB-A Kbd + eMMC + SD Card)
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
           path: u-boot
           fetch-depth: 1
 
-      - name: 编译全功能共存版
+      - name: 编译完整全功能版
         working-directory: ./u-boot
         run: |
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
@@ -78,7 +78,9 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_USB_MASS_STORAGE
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
 
-          # 5. 保留已验证正常的 mmc2 4-bit (eMMC) 与 mmc0 (SD卡) 设备树配置
+          # 5. 关键修正：&mmc0 移除失效的 cd-gpios 并启用 broken-cd 强制识别 SD 卡；同时删除原有冲突属性
+          sed -i '/cd-gpios/d' arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
+
           cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &pio {
@@ -117,7 +119,7 @@ jobs:
           &mmc0 {
               vmmc-supply = <&reg_dcdc1>;
               bus-width = <4>;
-              cd-gpios = <&pio 1 4 1>; /* PB4 */
+              broken-cd;
               status = "okay";
           };
 
@@ -132,15 +134,15 @@ jobs:
           };
           EOF
 
-          # 6. 完整恢复之前让键盘正常工作的全部 GPIO 拉高序列，并自动打印 SD卡与eMMC 分区表
+          # 6. 开机激活 USB-A 供电与键盘，自动列出并检验 SD卡(0) 与 eMMC(1)
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC STATUS ===; mmc list; echo === SD CARD (MMC 0) ===; mmc dev 0; mmc info; mmc part; echo === EMMC (MMC 1) ===; mmc dev 1; mmc info; mmc part"
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC LIST ===; mmc list; echo === SD CARD (0) ===; mmc dev 0; mmc info; echo === EMMC (1) ===; mmc dev 1; mmc info"
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
 
-      - name: 打包全功能共存版固件
+      - name: 打包全功能最终版固件
         uses: actions/upload-artifact@v4
         with:
-          name: a33-all-in-one-uboot-spl
+          name: a33-complete-uboot-spl
           path: u-boot/u-boot-sunxi-with-spl.bin
