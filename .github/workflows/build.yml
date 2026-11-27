@@ -1,4 +1,4 @@
-name: A33 SD Diag 1-3
+name: A33 eMMC UMS Build
 
 on:
   workflow_dispatch:
@@ -7,25 +7,8 @@ on:
 
 jobs:
   build:
-    name: sd-diag (${{ matrix.id }})
+    name: build-emmc-ums
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: "1"
-            sd_width: "1"
-            sd_freq: "25000000"
-            sd_cd: "ignore"
-          - id: "2"
-            sd_width: "4"
-            sd_freq: "25000000"
-            sd_cd: "ignore"
-          - id: "3"
-            sd_width: "4"
-            sd_freq: "25000000"
-            sd_cd: "pb4"
 
     steps:
       - name: 安装交叉编译环境
@@ -41,12 +24,8 @@ jobs:
           path: u-boot
           fetch-depth: 1
 
-      - name: 配置并编译测试版本 ${{ matrix.id }}
+      - name: 配置并编译版本
         working-directory: ./u-boot
-        env:
-          SD_WIDTH: ${{ matrix.sd_width }}
-          SD_FREQ: ${{ matrix.sd_freq }}
-          SD_CD: ${{ matrix.sd_cd }}
         run: |
           set -eux
 
@@ -88,7 +67,7 @@ jobs:
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
           ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # MMC、SD、eMMC、分区和文件系统
+          # eMMC、分区和文件系统（移除 SD mmc0 相关设置）
           ./scripts/config --enable CONFIG_MMC
           ./scripts/config --enable CONFIG_DM_MMC
           ./scripts/config --enable CONFIG_MMC_SUNXI
@@ -108,39 +87,16 @@ jobs:
           sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' \
             arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
-          if [ "$SD_CD" = "ignore" ]; then
-            SD_CD_PATCH="/delete-property/ cd-gpios;
-              broken-cd;"
-          else
-            SD_CD_PATCH="cd-gpios = <&pio 1 4 1>;"
-          fi
-
+          # 仅保留 eMMC (mmc2) 与 USB 相关 DTS 设置
           cat <<EOF >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &pio {
-              a33_sd_test_pins: a33-sd-test-pins {
-                  pins = "PF0", "PF1", "PF2", "PF3", "PF4", "PF5";
-                  function = "mmc0";
-                  drive-strength = <30>;
-                  bias-pull-up;
-              };
-
               a33_emmc_test_pins: a33-emmc-test-pins {
                   pins = "PC5", "PC6", "PC8", "PC9", "PC10", "PC16";
                   function = "mmc2";
                   drive-strength = <30>;
                   bias-pull-up;
               };
-          };
-
-          &mmc0 {
-              pinctrl-names = "default";
-              pinctrl-0 = <&a33_sd_test_pins>;
-              vmmc-supply = <&reg_dcdc1>;
-              $SD_CD_PATCH
-              bus-width = <$SD_WIDTH>;
-              max-frequency = <$SD_FREQ>;
-              status = "okay";
           };
 
           &mmc2 {
@@ -171,20 +127,11 @@ jobs:
           };
           EOF
 
+          # 输入 1 切换到 eMMC UMS 模式；退出仍使用原有 Ctrl+C 方式
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
           ./scripts/config --set-str CONFIG_BOOTCOMMAND ""
           ./scripts/config --set-str CONFIG_BOOTCOMMAND \
-            "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC DEVICES ===; mmc list; echo === MMC0 TEST ===; mmc dev 0; mmcinfo; echo === READY ==="
+            "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; mmc list; echo === Input 1 for eMMC UMS (Ctrl+C to exit) ===; setenv ums_sel; read ums_sel; if test \"\${ums_sel}\" = \"1\"; then ums 0 mmc 1; ums 0 mmc 2; fi"
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j"$(nproc)"
-
-          echo "=== DTB mmc@1c0f000 CHECK ==="
-          dtc -I dtb -O dts arch/arm/dts/sun8i-a33-sinlinx-sina33.dtb | grep -A 25 "mmc@1c0f000" || true
-
-      - name: 上传测试版本 ${{ matrix.id }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: sd-diag-${{ matrix.id }}
-          path: u-boot/u-boot-sunxi-with-spl.bin
-          if-no-files-found: error
