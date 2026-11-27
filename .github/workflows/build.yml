@@ -1,4 +1,4 @@
-name: A33 eMMC UMS + Screen + USB-A Kbd (Clean Final)
+name: A33 eMMC UMS + Screen + USB-A Kbd (Peripheral Fix)
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
           path: u-boot
           fetch-depth: 1
 
-      - name: 编译 eMMC 专用 UMS 挂载版
+      - name: 编译 eMMC UMS + 键盘交互版
         working-directory: ./u-boot
         run: |
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
@@ -43,7 +43,7 @@ jobs:
           ./scripts/config --enable CONFIG_DM_I2C
           ./scripts/config --enable CONFIG_CMD_I2C
 
-          # 3. 保持已验证成功的 USB0 OTG (UMS + Fastboot) + USB1 Host + USB键盘
+          # 3. 全面开启 USB0 OTG (UMS + Fastboot) + USB1 Host + USB键盘
           ./scripts/config --enable CONFIG_USB
           ./scripts/config --enable CONFIG_PHY_SUN4I_USB
           ./scripts/config --enable CONFIG_USB_MUSB_SUNXI
@@ -78,7 +78,9 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_FAT
           ./scripts/config --enable CONFIG_CMD_FS_GENERIC
 
-          # 5. 设备树：彻底禁用未使用的 mmc0 (SD卡)，仅激活 mmc2 (4-bit eMMC) 与 USB/I2C
+          # 5. 关键补回：强制将 usb_otg 设为纯从机(peripheral)，否则Linux电脑无法识别 UMS/Fastboot！
+          sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
+
           cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &pio {
@@ -106,6 +108,11 @@ jobs:
               status = "okay";
           };
 
+          &usb_otg {
+              dr_mode = "peripheral";
+              status = "okay";
+          };
+
           &ehci0 {
               status = "okay";
           };
@@ -129,15 +136,15 @@ jobs:
           };
           EOF
 
-          # 6. 开机直接开启 USB-A 供电、绑定键盘，打印 eMMC 分区表并自动挂载为 UMS 大容量存储设备（无 & 符号）
+          # 6. 开机直接开启 USB-A 供电、绑定键盘，打印 eMMC 分区表后停留在 => 命令行（不阻塞键盘）
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb start; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC INFO AND PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === MOUNTING EMMC TO OTG USB ===; ums 0 mmc 0"
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === READY: Type ums 0 mmc 0 to mount eMMC ==="
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
 
-      - name: 打包 eMMC UMS 专用版固件
+      - name: 打包固件
         uses: actions/upload-artifact@v4
         with:
-          name: a33-emmc-ums-final
+          name: a33-emmc-ums-kbd-ready
           path: u-boot/u-boot-sunxi-with-spl.bin
