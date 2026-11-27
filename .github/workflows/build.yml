@@ -7,6 +7,7 @@ on:
 
 jobs:
   build:
+    name: build (${{ matrix.id }}, SD ${{ matrix.sd_width }}-bit, ${{ matrix.sd_freq }})
     runs-on: ubuntu-latest
 
     strategy:
@@ -33,8 +34,8 @@ jobs:
           sudo apt-get install -y gcc-arm-linux-gnueabihf build-essential bison flex \
             libssl-dev device-tree-compiler python3-setuptools python3-dev swig
 
-      - name: 拉取主线 U-Boot 源码
-        uses: actions/checkout@v4
+      - name: 拉取 U-Boot
+        uses: actions/checkout@v6
         with:
           repository: u-boot/u-boot
           path: u-boot
@@ -43,7 +44,6 @@ jobs:
       - name: 配置并编译测试版本 ${{ matrix.id }}
         working-directory: ./u-boot
         env:
-          TEST_ID: ${{ matrix.id }}
           SD_WIDTH: ${{ matrix.sd_width }}
           SD_FREQ: ${{ matrix.sd_freq }}
         run: |
@@ -51,7 +51,7 @@ jobs:
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
 
-          # 1024x600 RGB666 屏幕与背光
+          # 屏幕及控制台
           ./scripts/config --enable CONFIG_VIDEO_SUNXI
           ./scripts/config --enable CONFIG_VIDEO_LCD_IF_PARALLEL
           ./scripts/config --disable CONFIG_VIDEO_LCD_IF_LVDS
@@ -87,7 +87,7 @@ jobs:
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
           ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # SD / eMMC / 分区与文件系统
+          # MMC / SD / eMMC
           ./scripts/config --enable CONFIG_MMC
           ./scripts/config --enable CONFIG_DM_MMC
           ./scripts/config --enable CONFIG_MMC_SUNXI
@@ -103,17 +103,29 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_FAT
           ./scripts/config --enable CONFIG_CMD_FS_GENERIC
 
-          # USB OTG 使用 peripheral 模式
+          # OTG peripheral 模式
           sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' \
             arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
-          # SD：绑定 PF0-PF5 pinctrl，保留 PB4 低电平卡检测
-          # eMMC：保留 MMC2 原有 PC 引脚配置
+          # 确认 eMMC 引用的引脚标签存在，防止再次因标签名错误而编译失败
+          grep -q 'mmc2_8bit_pins:' arch/arm/dts/sun8i-a33.dtsi
+
+          # 定义 SD PF0-PF5 引脚组，并配置 SD、eMMC、USB 节点
           cat <<EOF >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
+
+          &pio {
+              a33_mmc0_pins: a33-mmc0-pins {
+                  pins = "PF0", "PF1", "PF2", "PF3", "PF4", "PF5";
+                  function = "mmc0";
+                  drive-strength = <30>;
+                  bias-pull-up;
+              };
+          };
 
           &mmc0 {
               pinctrl-names = "default";
-              pinctrl-0 = <&mmc0_pins>;
+              pinctrl-0 = <&a33_mmc0_pins>;
+              vmmc-supply = <&reg_dcdc1>;
               cd-gpios = <&pio 1 4 1>;
               bus-width = <${SD_WIDTH}>;
               max-frequency = <${SD_FREQ}>;
@@ -122,9 +134,9 @@ jobs:
 
           &mmc2 {
               pinctrl-names = "default";
-              pinctrl-0 = <&mmc2_4bit_pins>;
+              pinctrl-0 = <&mmc2_8bit_pins>;
               vmmc-supply = <&reg_dcdc1>;
-              bus-width = <4>;
+              bus-width = <8>;
               non-removable;
               cap-mmc-hw-reset;
               status = "okay";
@@ -148,7 +160,7 @@ jobs:
           };
           EOF
 
-          # 保留原有 USB-A 供电、USB 键盘输入和 LCD/串口输出
+          # 保留原有 USB-A 供电、USB 键盘输入和显示/串口输出
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
           ./scripts/config --set-str CONFIG_BOOTCOMMAND \
             "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC DEVICES ===; mmc list; echo === READY ==="
@@ -156,8 +168,9 @@ jobs:
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j"$(nproc)"
 
-      - name: 上传测试固件 ${{ matrix.id }}
-        uses: actions/upload-artifact@v4
+      - name: 上传测试版本 ${{ matrix.id }}
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.id }}
           path: u-boot/u-boot-sunxi-with-spl.bin
+          if-no-files-found: error
