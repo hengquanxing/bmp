@@ -12,15 +12,19 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - name: emmc-only
+          - emmc-only
+          - sd-only
+          - emmc-and-sd
+        include:
+          - variant: emmc-only
             mmc0_status: disabled
             mmc2_status: okay
             extra_bootcmd: ""
-          - name: sd-only
+          - variant: sd-only
             mmc0_status: okay
             mmc2_status: disabled
             extra_bootcmd: ""
-          - name: emmc-and-sd
+          - variant: emmc-and-sd
             mmc0_status: okay
             mmc2_status: okay
             extra_bootcmd: "; mmc list"
@@ -38,7 +42,7 @@ jobs:
           path: u-boot
           fetch-depth: 1
 
-- name: 编译 eMMC UMS + 键盘交互版 (${{ matrix.variant.name }})
+- name: 编译 eMMC UMS + 键盘交互版 (${{ matrix.variant }})
         working-directory: ./u-boot
         run: |
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
@@ -142,7 +146,7 @@ jobs:
               pinctrl-0 = <&mmc0_pins>;
               bus-width = <4>;
               cd-gpios = <&pio 1 4 1>;
-              status = "${{ matrix.variant.mmc0_status }}";
+              status = "${{ matrix.mmc0_status }}";
           };
 
           &mmc2 {
@@ -152,13 +156,13 @@ jobs:
               bus-width = <4>;
               non-removable;
               cap-mmc-hw-reset;
-              status = "${{ matrix.variant.mmc2_status }}";
+              status = "${{ matrix.mmc2_status }}";
           };
           EOF
 
           # 6. 开机直接开启 USB-A 供电、绑定键盘，打印 eMMC 分区表后停留在 => 命令行（不阻塞键盘）
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === READY: Type ums 0 mmc 0 to mount eMMC ===${{ matrix.variant.extra_bootcmd }}"
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === READY: Type ums 0 mmc 0 to mount eMMC ===${{ matrix.extra_bootcmd }}"
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
@@ -166,5 +170,5 @@ jobs:
 - name: 打包固件
         uses: actions/upload-artifact@v4
         with:
-          name: a33-emmc-ums-kbd-ready-${{ matrix.variant.name }}
+          name: a33-emmc-ums-kbd-ready-${{ matrix.variant }}
           path: u-boot/u-boot-sunxi-with-spl.bin
