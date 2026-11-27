@@ -14,8 +14,16 @@ jobs:
       - name: 安装交叉编译环境
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabihf build-essential bison flex \
-            libssl-dev device-tree-compiler python3-setuptools python3-dev swig
+          sudo apt-get install -y \
+            gcc-arm-linux-gnueabihf \
+            build-essential \
+            bison \
+            flex \
+            libssl-dev \
+            device-tree-compiler \
+            python3-setuptools \
+            python3-dev \
+            swig
 
       - name: 拉取主线 U-Boot 源码
         uses: actions/checkout@v6
@@ -67,7 +75,7 @@ jobs:
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
           ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # eMMC、分区和文件系统（移除 SD mmc0 相关设置）
+          # eMMC、分区和文件系统
           ./scripts/config --enable CONFIG_MMC
           ./scripts/config --enable CONFIG_DM_MMC
           ./scripts/config --enable CONFIG_MMC_SUNXI
@@ -87,8 +95,8 @@ jobs:
           sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' \
             arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
-          # 仅保留 eMMC (mmc2) 与 USB 相关 DTS 设置
-          cat <<EOF >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
+          # 添加 eMMC 与 USB DTS 设置
+          cat <<'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &pio {
               a33_emmc_test_pins: a33-emmc-test-pins {
@@ -127,11 +135,48 @@ jobs:
           };
           EOF
 
-          # 输入 1 切换到 eMMC UMS 模式；退出仍使用原有 Ctrl+C 方式
+          # 输入 1 切换到 eMMC UMS 模式
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND ""
           ./scripts/config --set-str CONFIG_BOOTCOMMAND \
-            "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; mmc list; echo === Input 1 for eMMC UMS (Ctrl+C to exit) ===; setenv ums_sel; read ums_sel; if test \"\${ums_sel}\" = \"1\"; then ums 0 mmc 1; ums 0 mmc 2; fi"
+            'gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; mmc list; echo === Input 1 for eMMC UMS (Ctrl+C to exit) ===; setenv ums_sel; read ums_sel; if test "${ums_sel}" = "1"; then ums 0 mmc 1; ums 0 mmc 2; fi'
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j"$(nproc)"
+
+      - name: 收集编译产物
+        if: success()
+        run: |
+          set -eux
+          mkdir -p artifacts
+
+          # 收集 U-Boot、SPL 及 Allwinner 常见输出文件
+          find u-boot -type f \
+            \( -name 'u-boot' \
+            -o -name 'u-boot.bin' \
+            -o -name 'u-boot-dtb.bin' \
+            -o -name 'u-boot-nodtb.bin' \
+            -o -name 'u-boot-sunxi-with-spl.bin' \
+            -o -name 'sunxi-spl.bin' \
+            -o -name 'u-boot-spl' \
+            -o -name 'u-boot-spl.bin' \) \
+            -exec cp --parents {} artifacts/ \;
+
+          echo "收集到的文件："
+          find artifacts -type f -print
+
+          if [ -z "$(find artifacts -type f -print -quit)" ]; then
+            echo "没有找到预期的 U-Boot 编译文件。"
+            echo "u-boot 目录下的相关文件："
+            find u-boot -maxdepth 4 -type f \
+              \( -name 'u-boot*' -o -name '*sunxi*' \) -print
+            exit 1
+          fi
+
+      - name: 上传编译产物
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a33-uboot
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
