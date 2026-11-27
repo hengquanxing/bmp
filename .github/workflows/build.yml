@@ -78,8 +78,17 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_USB_MASS_STORAGE
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
 
-          # 5. 关键修正：mmc2 改为 4-bit 模式，释放 PC12~PC15 引脚供 USB-A 5V 供电使用！
+          # 5. 自定义仅占 PC5~PC10、PC16 的 mmc2_4bit_pins，腾出 PC12 供 USB-A 5V 供电使用
           cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
+
+          &pio {
+              mmc2_4bit_pins: mmc2-4bit-pins {
+                  pins = "PC5", "PC6", "PC8", "PC9", "PC10", "PC16";
+                  function = "mmc2";
+                  drive-strength = <30>;
+                  bias-pull-up;
+              };
+          };
 
           &i2c0 {
               status = "okay";
