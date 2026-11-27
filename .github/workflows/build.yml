@@ -18,19 +18,19 @@ jobs:
             usb_host: "yes"
             cmd: "echo === I2C TOUCH SCAN ===; i2c dev 0; i2c probe; i2c dev 1; i2c probe; echo === START FASTBOOT ===; fastboot 0"
 
-          # 版本2：开启全志 USB1 Host (EHCI+OHCI) + 常见5V供电脚 PH6/PH11/PB2 拉高（测USB键盘/U盘）
-          - name: "02_touch_scan_usb1_host_power_on"
+          # 版本2：开启全志 USB Host (EHCI0+OHCI0) + 常见5V供电脚 PH11/PB2/PC12 拉高（测USB键盘/U盘）
+          - name: "02_touch_scan_usb_host_power_on"
             usb_vbus_gpio: "all"
             usb_host: "yes"
             cmd: "echo === POWER ON USB & SCAN ===; gpio set PH11; gpio set PB2; gpio set PC12; usb start; usb tree; usb info; i2c dev 0; i2c probe; i2c dev 1; i2c probe"
 
-          # 版本3：将 USB0 设为 OTG 自动检测模式 + 强制开启 USB 虚拟串口(ACM)与屏幕双输出
+          # 版本3：开启 USB 虚拟串口(ACM)与屏幕双输出 + I2C触摸扫描
           - name: "03_touch_scan_usb_acm_console"
             usb_vbus_gpio: ""
             usb_host: "yes"
             cmd: "echo === I2C & USB ACM ===; i2c dev 0; i2c probe; i2c dev 1; i2c probe; setenv stdout vidconsole,usbacm; setenv stderr vidconsole,usbacm; setenv stdin serial,usbacm"
 
-          # 版本4：查询原厂/旧固件环境变量与所有GPIO状态（辅助定位触摸与USB引脚）
+          # 版本4：查询所有I2C总线与USB控制器状态
           - name: "04_gpio_i2c_full_diag"
             usb_vbus_gpio: ""
             usb_host: "yes"
@@ -72,7 +72,7 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_I2C
           ./scripts/config --enable CONFIG_I2C_SET_DEFAULT_BUS_NUM
 
-          # 3. 全面开启 USB0 (MUSB) + USB1 (EHCI/OHCI Host) + USB键盘 + Fastboot + ACM虚拟串口
+          # 3. 全面开启 USB0 (MUSB) + USB Host (EHCI0/OHCI0) + USB键盘 + Fastboot + ACM虚拟串口
           ./scripts/config --enable CONFIG_USB
           ./scripts/config --enable CONFIG_PHY_SUN4I_USB
           ./scripts/config --enable CONFIG_USB_MUSB_SUNXI
@@ -90,7 +90,7 @@ jobs:
           ./scripts/config --enable CONFIG_USB_FUNCTION_ACM
           ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # 4. 在设备树中强制激活 I2C0、I2C1（电容触摸总线）以及 USBPHY、EHCI1、OHCI1
+          # 4. 在设备树中激活 I2C0、I2C1（电容触摸总线）以及 USBPHY、EHCI0、OHCI0
           cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &i2c0 {
@@ -105,11 +105,11 @@ jobs:
               status = "okay";
           };
 
-          &ehci1 {
+          &ehci0 {
               status = "okay";
           };
 
-          &ohci1 {
+          &ohci0 {
               status = "okay";
           };
           EOF
