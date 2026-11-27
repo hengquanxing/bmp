@@ -1,4 +1,4 @@
-name: A33 RGB666 Screen + USB Blind Test
+name: A33 Screen OK + Touch I2C Scan + USB Deep Test
 
 on:
   workflow_dispatch:
@@ -12,37 +12,29 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - name: "01_rgb_peripheral_fastboot"
-            patch_dts: "yes"
-            id_det: ""
-            vbus_det: ""
-            vbus_pin: ""
-            usb_host: "no"
-            cmd: "echo === RGB SCREEN OK - FASTBOOT ===; fastboot 0"
-
-          - name: "02_rgb_peripheral_usbacm"
-            patch_dts: "yes"
-            id_det: ""
-            vbus_det: ""
-            vbus_pin: ""
-            usb_host: "no"
-            cmd: "echo === RGB SCREEN OK - USB ACM ===; setenv stdout vidconsole,usbacm; setenv stderr vidconsole,usbacm; setenv stdin serial,usbacm"
-
-          - name: "03_rgb_axp223_fastboot"
-            patch_dts: "no"
-            id_det: ""
-            vbus_det: "axp_vbus"
-            vbus_pin: ""
-            usb_host: "no"
-            cmd: "echo === RGB AXP_VBUS FASTBOOT ===; fastboot 0"
-
-          - name: "04_rgb_usb1_host_kbd"
-            patch_dts: "no"
-            id_det: ""
-            vbus_det: ""
-            vbus_pin: ""
+          # 版本1：扫描全板I2C电容触摸芯片地址(屏幕直接显示结果) + 激活USBPHY电源 + Fastboot
+          - name: "01_touch_i2c_scan_usb_phy_fastboot"
+            usb_vbus_gpio: ""
             usb_host: "yes"
-            cmd: "echo === SCANNING USB1 HOST ===; usb start; usb tree; usb info"
+            cmd: "echo === I2C TOUCH SCAN ===; i2c dev 0; i2c probe; i2c dev 1; i2c probe; echo === START FASTBOOT ===; fastboot 0"
+
+          # 版本2：开启全志 USB1 Host (EHCI+OHCI) + 常见5V供电脚 PH6/PH11/PB2 拉高（测USB键盘/U盘）
+          - name: "02_touch_scan_usb1_host_power_on"
+            usb_vbus_gpio: "all"
+            usb_host: "yes"
+            cmd: "echo === POWER ON USB & SCAN ===; gpio set PH11; gpio set PB2; gpio set PC12; usb start; usb tree; usb info; i2c dev 0; i2c probe; i2c dev 1; i2c probe"
+
+          # 版本3：将 USB0 设为 OTG 自动检测模式 + 强制开启 USB 虚拟串口(ACM)与屏幕双输出
+          - name: "03_touch_scan_usb_acm_console"
+            usb_vbus_gpio: ""
+            usb_host: "yes"
+            cmd: "echo === I2C & USB ACM ===; i2c dev 0; i2c probe; i2c dev 1; i2c probe; setenv stdout vidconsole,usbacm; setenv stderr vidconsole,usbacm; setenv stdin serial,usbacm"
+
+          # 版本4：查询原厂/旧固件环境变量与所有GPIO状态（辅助定位触摸与USB引脚）
+          - name: "04_gpio_i2c_full_diag"
+            usb_vbus_gpio: ""
+            usb_host: "yes"
+            cmd: "echo === I2C0 ===; i2c dev 0; i2c probe; echo === I2C1 ===; i2c dev 1; i2c probe; echo === USB ===; usb start; usb tree"
 
     steps:
       - name: 安装交叉编译环境
@@ -58,12 +50,12 @@ jobs:
           path: u-boot
           fetch-depth: 1
 
-      - name: 应用 RGB666 屏幕与 USB 配置 [${{ matrix.variant.name }}]
+      - name: 编译 [${{ matrix.variant.name }}]
         working-directory: ./u-boot
         run: |
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
 
-          # 1. 写入精确 1024x600 RGB666 屏幕参数与背光引脚
+          # 1. 完全保留已点亮的 1024x600 RGB666 屏幕参数，其他不变
           ./scripts/config --enable CONFIG_VIDEO_SUNXI
           ./scripts/config --enable CONFIG_VIDEO_LCD_IF_PARALLEL
           ./scripts/config --disable CONFIG_VIDEO_LCD_IF_LVDS
@@ -74,35 +66,55 @@ jobs:
           ./scripts/config --enable CONFIG_SYS_CONSOLE_IS_IN_ENV
           ./scripts/config --enable CONFIG_VIDCONSOLE_AS_LCD
 
-          # 2. 开启 MUSB (USB0) 及 Fastboot / CDC-ACM 虚拟串口
+          # 2. 开启电容触摸所需的 I2C0 / I2C1 总线控制器与 i2c 探测命令
+          ./scripts/config --enable CONFIG_SYS_I2C_MVTWSI
+          ./scripts/config --enable CONFIG_DM_I2C
+          ./scripts/config --enable CONFIG_CMD_I2C
+          ./scripts/config --enable CONFIG_I2C_SET_DEFAULT_BUS_NUM
+
+          # 3. 全面开启 USB0 (MUSB) + USB1 (EHCI/OHCI Host) + USB键盘 + Fastboot + ACM虚拟串口
           ./scripts/config --enable CONFIG_USB
+          ./scripts/config --enable CONFIG_PHY_SUN4I_USB
           ./scripts/config --enable CONFIG_USB_MUSB_SUNXI
           ./scripts/config --enable CONFIG_USB_MUSB_GADGET
+          ./scripts/config --enable CONFIG_USB_EHCI_HCD
+          ./scripts/config --enable CONFIG_USB_EHCI_SUNXI
+          ./scripts/config --enable CONFIG_USB_OHCI_HCD
+          ./scripts/config --enable CONFIG_USB_OHCI_SUNXI
+          ./scripts/config --enable CONFIG_CMD_USB
+          ./scripts/config --enable CONFIG_USB_KEYBOARD
           ./scripts/config --enable CONFIG_USB_GADGET
           ./scripts/config --enable CONFIG_USB_GADGET_DOWNLOAD
           ./scripts/config --enable CONFIG_CMD_FASTBOOT
           ./scripts/config --enable CONFIG_USB_FUNCTION_FASTBOOT
           ./scripts/config --enable CONFIG_USB_FUNCTION_ACM
+          ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # 3. 若需要测试 USB1 Host（接键盘/U盘），开启 EHCI/OHCI 与 USB 键盘支持
-          if [ "${{ matrix.variant.usb_host }}" = "yes" ]; then
-            ./scripts/config --enable CONFIG_USB_EHCI_HCD
-            ./scripts/config --enable CONFIG_USB_EHCI_SUNXI
-            ./scripts/config --enable CONFIG_USB_OHCI_HCD
-            ./scripts/config --enable CONFIG_USB_OHCI_SUNXI
-            ./scripts/config --enable CONFIG_CMD_USB
-            ./scripts/config --enable CONFIG_USB_KEYBOARD
-          fi
+          # 4. 在设备树中强制激活 I2C0、I2C1（电容触摸总线）以及 USBPHY、EHCI1、OHCI1
+          cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
-          # 4. 强改设备树：绕过底板引脚差异，强制将 usb_otg 设为纯从机模式
-          if [ "${{ matrix.variant.patch_dts }}" = "yes" ]; then
-            sed -i 's/dr_mode = "otg";/dr_mode = "peripheral";/g' arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
-          fi
+          &i2c0 {
+              status = "okay";
+          };
 
-          # 5. 设置 USB 引脚与开机自启命令
-          ./scripts/config --set-str CONFIG_USB0_ID_DET "${{ matrix.variant.id_det }}"
-          ./scripts/config --set-str CONFIG_USB0_VBUS_DET "${{ matrix.variant.vbus_det }}"
-          ./scripts/config --set-str CONFIG_USB0_VBUS_PIN "${{ matrix.variant.vbus_pin }}"
+          &i2c1 {
+              status = "okay";
+          };
+
+          &usbphy {
+              status = "okay";
+          };
+
+          &ehci1 {
+              status = "okay";
+          };
+
+          &ohci1 {
+              status = "okay";
+          };
+          EOF
+
+          # 5. 设置开机自启探测命令
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
           ./scripts/config --set-str CONFIG_BOOTCOMMAND "${{ matrix.variant.cmd }}"
 
