@@ -172,8 +172,9 @@ jobs:
           EOF
 
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND ""
           ./scripts/config --set-str CONFIG_BOOTCOMMAND \
-            "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC DEVICES ===; mmc list; echo === MMC0 TEST ===; mmc dev 0 && mmcinfo || true; echo === READY ==="
+            "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC DEVICES ===; mmc list; echo === MMC0 TEST ===; mmc dev 0; mmcinfo; echo === READY ==="
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j"$(nproc)"
