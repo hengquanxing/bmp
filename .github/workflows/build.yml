@@ -1,4 +1,4 @@
-name: A33 All-In-One (Screen + 4bit eMMC + SD + USB-A Kbd)
+name: A33 All-In-One (Screen + eMMC + SD + USB-A Kbd Fix)
 
 on:
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
           ./scripts/config --enable CONFIG_SYS_CONSOLE_IS_IN_ENV
           ./scripts/config --enable CONFIG_VIDCONSOLE_AS_LCD
 
-          # 2. 开启 I2C0 / I2C1 / I2C2 总线（支持6线电容触摸探测）
+          # 2. 开启 I2C0 / I2C1 / I2C2 总线
           ./scripts/config --enable CONFIG_SYS_I2C_MVTWSI
           ./scripts/config --enable CONFIG_DM_I2C
           ./scripts/config --enable CONFIG_CMD_I2C
@@ -78,7 +78,7 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_USB_MASS_STORAGE
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
 
-          # 5. 自定义仅占 PC5~PC10、PC16 的 mmc2_4bit_pins，腾出 PC12 供 USB-A 5V 供电使用
+          # 5. 保留已验证正常的 mmc2 4-bit (eMMC) 与 mmc0 (SD卡) 设备树配置
           cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &pio {
@@ -132,9 +132,9 @@ jobs:
           };
           EOF
 
-          # 6. 恢复拉高 PC12（USB-A 5V 供电开关）并绑定 USB 键盘，同时扫描存储设备
+          # 6. 完整恢复之前让键盘正常工作的全部 GPIO 拉高序列，并自动打印 SD卡与eMMC 分区表
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PC12; gpio set PH6; gpio set PH11; gpio set PB2; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC STATUS ===; mmc list; mmc dev 0; mmc info; mmc dev 1; mmc info"
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC STATUS ===; mmc list; echo === SD CARD (MMC 0) ===; mmc dev 0; mmc info; mmc part; echo === EMMC (MMC 1) ===; mmc dev 1; mmc info; mmc part"
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
