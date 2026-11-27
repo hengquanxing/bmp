@@ -1,4 +1,4 @@
-name: A33 SD Card Power 5-Variant Test
+name: A33 eMMC UMS + Screen + USB-A Kbd (Clean Final)
 
 on:
   workflow_dispatch:
@@ -6,37 +6,8 @@ on:
     branches: [ main, master ]
 
 jobs:
-  build-matrix:
+  build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          # 版本1：AXP223 ALDO1 供电（大量A33平板/工控板用 ALDO1 给 TF卡槽供电）
-          - name: "01_sd_power_axp_aldo1"
-            vmmc: "reg_aldo1"
-            gpio_cmd: ""
-
-          # 版本2：AXP223 DLDO1 / ELDO1 供电（常见独立3.3V卡槽电源）
-          - name: "02_sd_power_axp_dldo1"
-            vmmc: "reg_dldo1"
-            gpio_cmd: ""
-
-          # 版本3：AXP223 DCDC1 + 拉低常见低电平有效卡槽供电脚 (PB4 / PH10 / PH4)
-          - name: "03_sd_power_gpio_low_pb4_ph10"
-            vmmc: "reg_dcdc1"
-            gpio_cmd: "gpio clear PB4; gpio clear PH10; gpio clear PH4; gpio clear PH5;"
-
-          # 版本4：AXP223 DCDC1 + 拉高常见高电平有效卡槽供电脚 (PB4 / PH10 / PH4)
-          - name: "04_sd_power_gpio_high_pb4_ph10"
-            vmmc: "reg_dcdc1"
-            gpio_cmd: "gpio set PB4; gpio set PH10; gpio set PH4; gpio set PH5;"
-
-          # 版本5：AXP223 ALDO2 供电 + 降速 25MHz 兼容长走线/老旧TF卡
-          - name: "05_sd_power_axp_aldo2_25mhz"
-            vmmc: "reg_aldo2"
-            gpio_cmd: ""
-
     steps:
       - name: 安装交叉编译环境
         run: |
@@ -51,7 +22,7 @@ jobs:
           path: u-boot
           fetch-depth: 1
 
-      - name: 编译 [${{ matrix.variant.name }}]
+      - name: 编译 eMMC 专用 UMS 挂载版
         working-directory: ./u-boot
         run: |
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
@@ -67,12 +38,12 @@ jobs:
           ./scripts/config --enable CONFIG_SYS_CONSOLE_IS_IN_ENV
           ./scripts/config --enable CONFIG_VIDCONSOLE_AS_LCD
 
-          # 2. 开启 I2C0 / I2C1 / I2C2 总线
+          # 2. 开启 I2C0 / I2C1 / I2C2 总线（保留后续内核触摸与RTC支持）
           ./scripts/config --enable CONFIG_SYS_I2C_MVTWSI
           ./scripts/config --enable CONFIG_DM_I2C
           ./scripts/config --enable CONFIG_CMD_I2C
 
-          # 3. 保持已验证成功的 USB0 Fastboot + USB1 EHCI/OHCI + USB键盘
+          # 3. 保持已验证成功的 USB0 OTG (UMS + Fastboot) + USB1 Host + USB键盘
           ./scripts/config --enable CONFIG_USB
           ./scripts/config --enable CONFIG_PHY_SUN4I_USB
           ./scripts/config --enable CONFIG_USB_MUSB_SUNXI
@@ -88,9 +59,11 @@ jobs:
           ./scripts/config --enable CONFIG_USB_GADGET_DOWNLOAD
           ./scripts/config --enable CONFIG_CMD_FASTBOOT
           ./scripts/config --enable CONFIG_USB_FUNCTION_FASTBOOT
+          ./scripts/config --enable CONFIG_CMD_USB_MASS_STORAGE
+          ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
           ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # 4. 开启 SD卡 (MMC0) + 板载 eMMC (MMC2) + 分区表 + 文件系统 + UMS
+          # 4. 仅启用板载 eMMC (MMC2) 与完整分区表/文件系统支持
           ./scripts/config --enable CONFIG_MMC
           ./scripts/config --enable CONFIG_MMC_SUNXI
           ./scripts/config --set-val CONFIG_MMC_SUNXI_SLOT_EXTRA 2
@@ -104,12 +77,8 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_EXT4
           ./scripts/config --enable CONFIG_CMD_FAT
           ./scripts/config --enable CONFIG_CMD_FS_GENERIC
-          ./scripts/config --enable CONFIG_CMD_USB_MASS_STORAGE
-          ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
 
-          # 5. 移除原设备树里冲突的 cd-gpios 与 vmmc-supply，写入当前测试版本的供电配置
-          sed -i '/cd-gpios/d' arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
-
+          # 5. 设备树：彻底禁用未使用的 mmc0 (SD卡)，仅激活 mmc2 (4-bit eMMC) 与 USB/I2C
           cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           &pio {
@@ -146,11 +115,7 @@ jobs:
           };
 
           &mmc0 {
-              vmmc-supply = <&${{ matrix.variant.vmmc }}>;
-              bus-width = <4>;
-              max-frequency = <25000000>;
-              broken-cd;
-              status = "okay";
+              status = "disabled";
           };
 
           &mmc2 {
@@ -164,15 +129,15 @@ jobs:
           };
           EOF
 
-          # 6. 开机执行供电初始化 + 键盘绑定 + 自动重置并检测 SD卡(0) 与 eMMC(1)
+          # 6. 开机直接开启 USB-A 供电、绑定键盘，打印 eMMC 分区表并自动挂载为 UMS 大容量存储设备
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "${{ matrix.variant.gpio_cmd }} gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC RESCAN ===; mmc rescan; mmc list; echo === SD CARD (0) ===; mmc dev 0; mmc info; echo === EMMC (1) ===; mmc dev 1; mmc info"
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb start; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === EMMC INFO & PARTITIONS ===; mmc dev 0; mmc info; mmc part; echo === MOUNTING EMMC TO OTG USB (Ctrl+C to exit) ===; ums 0 mmc 0"
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
 
-      - name: 打包产物 [${{ matrix.variant.name }}]
+      - name: 打包 eMMC UMS 专用版固件
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.variant.name }}
+          name: a33-emmc-ums-final
           path: u-boot/u-boot-sunxi-with-spl.bin
