@@ -12,7 +12,6 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          # 版本1：强改设备树为纯从机(Peripheral)，彻底忽略ID脚与VBUS检测，启动后同时开启Fastboot与屏幕日志
           - name: "01_dts_force_peripheral_fastboot"
             patch_dts: "yes"
             id_det: ""
@@ -21,7 +20,6 @@ jobs:
             usb_host: "no"
             cmd: "echo === USB0 PERIPHERAL FASTBOOT ===; fastboot 0"
 
-          # 版本2：强改设备树为纯从机，开启USB虚拟串口(CDC ACM)，成功则电脑直接多出COM口
           - name: "02_dts_force_peripheral_usbacm"
             patch_dts: "yes"
             id_det: ""
@@ -30,7 +28,6 @@ jobs:
             usb_host: "no"
             cmd: "echo === STARTING USB ACM SERIAL ===; setenv stdout vidconsole,usbacm; setenv stderr vidconsole,usbacm; setenv stdin serial,usbacm"
 
-          # 版本3：使用 AXP223 PMIC 检测 VBUS（多数10寸A33平板采用此方案）
           - name: "03_axp223_vbus_fastboot"
             patch_dts: "no"
             id_det: ""
@@ -39,7 +36,6 @@ jobs:
             usb_host: "no"
             cmd: "echo === AXP_VBUS FASTBOOT ===; fastboot 0"
 
-          # 版本4：公板标准引脚组合 (ID=PH9, VBUS_DET=PH10)
           - name: "04_pin_ph9_ph10_fastboot"
             patch_dts: "no"
             id_det: "PH9"
@@ -48,7 +44,6 @@ jobs:
             usb_host: "no"
             cmd: "echo === PH9_PH10 FASTBOOT ===; fastboot 0"
 
-          # 版本5：开启 USB1 Host 主机模式（防止你的接口实际接在USB1而非USB0，插USB键盘或U盘可测）
           - name: "05_usb1_host_kbd_scan"
             patch_dts: "no"
             id_det: "PH8"
@@ -57,7 +52,6 @@ jobs:
             usb_host: "yes"
             cmd: "echo === SCANNING USB HOST ===; usb start; usb tree; usb info"
 
-          # 版本6：纯屏幕打印所有环境变量与设备状态（确认屏幕控制台输出是否正常）
           - name: "06_screen_console_diag"
             patch_dts: "yes"
             id_det: ""
@@ -74,14 +68,14 @@ jobs:
             libssl-dev device-tree-compiler python3-setuptools python3-dev swig
 
       - name: 拉取主线 U-Boot 源码
-        run: git clone https://denx.de --depth=1
+        run: git clone https://github.com/u-boot/u-boot.git --depth=1
 
       - name: 应用配置并编译 [${{ matrix.variant.name }}]
         working-directory: ./u-boot
         run: |
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- ga10h_v1_1_defconfig
 
-          # 1. 强制将标准输出绑定到 10.1寸(1024x600) 屏幕，开机即在屏幕左上角显示白字日志
+          # 1. 强制将标准输出绑定到 10.1寸(1024x600) 屏幕
           ./scripts/config --enable CONFIG_VIDEO_SUNXI
           ./scripts/config --set-str CONFIG_VIDEO_LCD_MODE "x:1024,y:600,depth:18,pclk_khz:51200,le:160,ri:160,up:23,lo:12,hs:1,vs:1,sync:3,vmode:0"
           ./scripts/config --enable CONFIG_CONSOLE_MUX
