@@ -1,4 +1,4 @@
-name: A33 Final Complete (Screen + USB-A Kbd + eMMC + SD Card)
+name: A33 SD Card Power 5-Variant Test
 
 on:
   workflow_dispatch:
@@ -6,8 +6,37 @@ on:
     branches: [ main, master ]
 
 jobs:
-  build:
+  build-matrix:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          # 版本1：AXP223 ALDO1 供电（大量A33平板/工控板用 ALDO1 给 TF卡槽供电）
+          - name: "01_sd_power_axp_aldo1"
+            vmmc: "reg_aldo1"
+            gpio_cmd: ""
+
+          # 版本2：AXP223 DLDO1 / ELDO1 供电（常见独立3.3V卡槽电源）
+          - name: "02_sd_power_axp_dldo1"
+            vmmc: "reg_dldo1"
+            gpio_cmd: ""
+
+          # 版本3：AXP223 DCDC1 + 拉低常见低电平有效卡槽供电脚 (PB4 / PH10 / PH4)
+          - name: "03_sd_power_gpio_low_pb4_ph10"
+            vmmc: "reg_dcdc1"
+            gpio_cmd: "gpio clear PB4; gpio clear PH10; gpio clear PH4; gpio clear PH5;"
+
+          # 版本4：AXP223 DCDC1 + 拉高常见高电平有效卡槽供电脚 (PB4 / PH10 / PH4)
+          - name: "04_sd_power_gpio_high_pb4_ph10"
+            vmmc: "reg_dcdc1"
+            gpio_cmd: "gpio set PB4; gpio set PH10; gpio set PH4; gpio set PH5;"
+
+          # 版本5：AXP223 ALDO2 供电 + 降速 25MHz 兼容长走线/老旧TF卡
+          - name: "05_sd_power_axp_aldo2_25mhz"
+            vmmc: "reg_aldo2"
+            gpio_cmd: ""
+
     steps:
       - name: 安装交叉编译环境
         run: |
@@ -22,7 +51,7 @@ jobs:
           path: u-boot
           fetch-depth: 1
 
-      - name: 编译完整全功能版
+      - name: 编译 [${{ matrix.variant.name }}]
         working-directory: ./u-boot
         run: |
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- Sinlinx_SinA33_defconfig
@@ -61,7 +90,7 @@ jobs:
           ./scripts/config --enable CONFIG_USB_FUNCTION_FASTBOOT
           ./scripts/config --enable CONFIG_CMD_GPIO
 
-          # 4. 开启 SD卡 (MMC0) + 板载 eMMC (MMC2) + 分区表 + 文件系统 + UMS虚拟U盘
+          # 4. 开启 SD卡 (MMC0) + 板载 eMMC (MMC2) + 分区表 + 文件系统 + UMS
           ./scripts/config --enable CONFIG_MMC
           ./scripts/config --enable CONFIG_MMC_SUNXI
           ./scripts/config --set-val CONFIG_MMC_SUNXI_SLOT_EXTRA 2
@@ -78,7 +107,7 @@ jobs:
           ./scripts/config --enable CONFIG_CMD_USB_MASS_STORAGE
           ./scripts/config --enable CONFIG_USB_FUNCTION_MASS_STORAGE
 
-          # 5. 关键修正：&mmc0 移除失效的 cd-gpios 并启用 broken-cd 强制识别 SD 卡；同时删除原有冲突属性
+          # 5. 移除原设备树里冲突的 cd-gpios 与 vmmc-supply，写入当前测试版本的供电配置
           sed -i '/cd-gpios/d' arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
 
           cat << 'EOF' >> arch/arm/dts/sun8i-a33-sinlinx-sina33.dts
@@ -117,8 +146,9 @@ jobs:
           };
 
           &mmc0 {
-              vmmc-supply = <&reg_dcdc1>;
+              vmmc-supply = <&${{ matrix.variant.vmmc }}>;
               bus-width = <4>;
+              max-frequency = <25000000>;
               broken-cd;
               status = "okay";
           };
@@ -134,15 +164,15 @@ jobs:
           };
           EOF
 
-          # 6. 开机激活 USB-A 供电与键盘，自动列出并检验 SD卡(0) 与 eMMC(1)
+          # 6. 开机执行供电初始化 + 键盘绑定 + 自动重置并检测 SD卡(0) 与 eMMC(1)
           ./scripts/config --enable CONFIG_USE_BOOTCOMMAND
-          ./scripts/config --set-str CONFIG_BOOTCOMMAND "gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC LIST ===; mmc list; echo === SD CARD (0) ===; mmc dev 0; mmc info; echo === EMMC (1) ===; mmc dev 1; mmc info"
+          ./scripts/config --set-str CONFIG_BOOTCOMMAND "${{ matrix.variant.gpio_cmd }} gpio set PH6; gpio set PH8; gpio set PH9; gpio set PH11; gpio set PB2; gpio set PB3; gpio set PC12; gpio set PE14; gpio set PE15; sleep 1; usb reset; setenv stdin serial,usbkbd; setenv stdout serial,vidconsole; setenv stderr serial,vidconsole; echo === MMC RESCAN ===; mmc rescan; mmc list; echo === SD CARD (0) ===; mmc dev 0; mmc info; echo === EMMC (1) ===; mmc dev 1; mmc info"
 
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
 
-      - name: 打包全功能最终版固件
+      - name: 打包产物 [${{ matrix.variant.name }}]
         uses: actions/upload-artifact@v4
         with:
-          name: a33-complete-uboot-spl
+          name: ${{ matrix.variant.name }}
           path: u-boot/u-boot-sunxi-with-spl.bin
